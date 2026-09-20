@@ -19,9 +19,14 @@ python -m pip download --disable-pip-version-check --no-deps "deepseek-harness-r
 $wheel = Get-ChildItem $downloadDir -Filter "*.whl" | Select-Object -First 1
 if (-not $wheel) { throw "Runtime wheel was not downloaded." }
 
-Expand-Archive -Path $wheel.FullName -DestinationPath $extractDir
-
+$python = @"
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    z.extractall(sys.argv[2])
+"@
+$python | python - $wheel.FullName $extractDir
 $exeName = "deepseek-harness-sdk-runtime-win-x64.exe"
+
 $exe = Get-ChildItem $extractDir -Recurse -Filter $exeName | Select-Object -First 1
 if (-not $exe) { throw "Expected runtime executable $exeName was not found in wheel." }
 
