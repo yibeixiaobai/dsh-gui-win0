@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $manifestPath = Join-Path $PSScriptRoot "..\runtime\dsh-runtime.json"
 $manifest = Get-Content $manifestPath | ConvertFrom-Json
 $version = $manifest.harnessVersion
-$tag = "v$version"
+$tag = "dsh-v$version"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $buildRoot = Join-Path $env:RUNNER_TEMP "dsh-harness-runtime-build"
