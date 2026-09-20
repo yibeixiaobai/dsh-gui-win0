@@ -25,8 +25,7 @@ function jsonText(value: unknown): string {
 
 function extractText(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
-  const root = value as Record<string, unknown>;
-  const event = root.event;
+  const event = (value as Record<string, unknown>).event;
   if (!event || typeof event !== "object") return null;
   const record = event as Record<string, unknown>;
   if (typeof record.text === "string") return record.text;
@@ -97,23 +96,35 @@ export default function App() {
   async function connect() {
     if (!settings.workspace) return setError("请先选择 Workspace。");
     if (!settings.provider || !settings.model) return setError("请填写 Provider 和 Model。");
+
     setBusy(true);
     setError(null);
+    let started = false;
     try {
       await saveSettings(settings);
-      const next = await runtimeStart(settings.workspace, settings);
-      setSnapshot(next);
-      await runtimeRequest("initialize", {
+      await runtimeStart(settings.workspace, settings);
+      started = true;
+
+      const response = await runtimeRequest("initialize", {
         cwd: settings.workspace,
         provider: settings.provider,
         model: settings.model,
         ...(settings.reasoningEffort ? { reasoningEffort: settings.reasoningEffort } : {})
       });
+
+      const serverInfo = (response as { result?: { serverInfo?: { name?: string } } })?.result?.serverInfo;
+      if (serverInfo?.name !== "deepseek-harness-sdk-runtime") {
+        throw new Error("Runtime handshake returned an unexpected server identity.");
+      }
+
       setSnapshot(await runtimeStatus());
     } catch (cause) {
+      if (started) await runtimeStop().catch(() => undefined);
       setError(String(cause));
       setSnapshot(await runtimeStatus().catch(() => null));
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function disconnect() {
@@ -130,10 +141,7 @@ export default function App() {
     setPrompt("");
     setMessages(current => [...current, { id: crypto.randomUUID(), role: "user", text }]);
     try {
-      await runtimeRequest("session/prompt", {
-        sessionId,
-        contentBlocks: [{ type: "text", text }]
-      });
+      await runtimeRequest("session/prompt", { sessionId, contentBlocks: [{ type: "text", text }] });
     } catch (cause) { setError(String(cause)); }
   }
 
