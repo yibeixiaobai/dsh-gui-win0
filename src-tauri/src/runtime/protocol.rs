@@ -32,12 +32,7 @@ impl JsonRpcRequest {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum RuntimeEventKind {
-  JsonRpc,
-  Stderr,
-  Terminated,
-  Error,
-}
+pub enum RuntimeEventKind { JsonRpc, Stderr, Terminated, Error }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeEvent {
@@ -55,4 +50,27 @@ pub fn response_id(value: &Value) -> Option<u64> {
 
 pub fn is_response(value: &Value) -> bool {
   value.get("id").is_some()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn request_is_one_json_line() {
+    let request = JsonRpcRequest::new("initialize", Some(json!({"model":"x"})));
+    let line = request.to_line().expect("serialize");
+    assert!(line.ends_with('\n'));
+    let parsed = parse_json_line(&line).expect("parse");
+    assert_eq!(parsed["jsonrpc"], "2.0");
+    assert_eq!(parsed["method"], "initialize");
+    assert_eq!(parsed["id"].as_u64(), Some(request.id));
+  }
+
+  #[test]
+  fn response_helpers_detect_id() {
+    let response = json!({"jsonrpc":"2.0","id":7,"result":{}});
+    assert!(is_response(&response));
+    assert_eq!(response_id(&response), Some(7));
+  }
 }
