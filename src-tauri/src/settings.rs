@@ -1,4 +1,4 @@
-use std::{fs, io};
+use std::{fs, io, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -41,7 +41,10 @@ pub fn save_settings<R: tauri::Runtime>(
 ) -> io::Result<()> {
   let paths = AppPaths::from_app(app).map_err(io::Error::other)?;
   paths.ensure_layout()?;
+
   let bytes = serde_json::to_vec_pretty(settings).map_err(io::Error::other)?;
-  fs::write(paths.settings_file, bytes)?;
+  let tmp = PathBuf::from(format!("{}.tmp", paths.settings_file.display()));
+  fs::write(&tmp, bytes)?;
+  fs::rename(tmp, paths.settings_file)?;
   Ok(())
 }
