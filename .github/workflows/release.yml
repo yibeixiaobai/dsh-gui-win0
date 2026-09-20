@@ -31,6 +31,8 @@ jobs:
       - run: pnpm install --no-frozen-lockfile
       - shell: pwsh
         run: powershell -ExecutionPolicy Bypass -File scripts/prepare-runtime.ps1
+      - shell: pwsh
+        run: python scripts/smoke-runtime.py runtime/bin/deepseek-harness-sdk-runtime-win-x64.exe
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm tauri build
