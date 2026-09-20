@@ -14,35 +14,39 @@ import {
   sessionRegister,
   sessionForget,
   sessionSetStatus,
+  updateCheck,
+  updateInstall,
   type DesktopSettings,
   type RuntimeEvent,
   type RuntimeManifest,
   type RuntimeSnapshot,
-  type SessionSummary
+  type SessionSummary,
+  type UpdateInfo
 } from "./api";
 
 type ChatMessage = { id: string; role: "user" | "assistant"; text: string };
+type ApprovalNotice = { id: string; toolName: string; sessionId: string };
 
 function jsonText(value: unknown): string {
   if (typeof value === "string") return value;
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
-function extractEventText(value: unknown): { text: string | null; type: string | null } {
-  if (!value || typeof value !== "object") return { text: null, type: null };
-  const event = (value as Record<string, unknown>).event;
-  if (!event || typeof event !== "object") return { text: null, type: null };
-  const record = event as Record<string, unknown>;
-  const type = typeof record.type === "string" ? record.type : null;
-  if (typeof record.text === "string") return { text: record.text, type };
-  if (Array.isArray(record.content)) {
-    const texts = record.content
-      .filter(block => block && typeof block === "object" && (block as Record<string, unknown>).type === "text")
-      .map(block => String((block as Record<string, unknown>).text ?? ""))
-      .filter(Boolean);
-    return { text: texts.length ? texts.join("") : null, type };
-  }
-  return { text: null, type };
+function extractEvent(value: unknown): { text: string | null; type: string | null; data: Record<string, unknown> | null } {
+  if (!value || typeof value !== "object") return { text: null, type: null, data: null };
+  const raw = (value as Record<string, unknown>).event;
+  if (!raw || typeof raw !== "object") return { text: null, type: null, data: null };
+  const event = raw as Record<string, unknown>;
+  const type = typeof event.type === "string" ? event.type : null;
+  const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : null;
+  if (typeof event.text === "string") return { text: event.text, type, data };
+  const content = event.content;
+  if (!Array.isArray(content)) return { text: null, type, data };
+  const texts = content
+    .filter(block => block && typeof block === "object" && (block as Record<string, unknown>).type === "text")
+    .map(block => String((block as Record<string, unknown>).text ?? ""))
+    .filter(Boolean);
+  return { text: texts.length ? texts.join("") : null, type, data };
 }
 
 export default function App() {
@@ -59,6 +63,9 @@ export default function App() {
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
+  const [approval, setApproval] = useState<ApprovalNotice | null>(null);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,7 +92,8 @@ export default function App() {
   useEffect(() => {
     let cleanup: (() => void) | undefined;
     void listenRuntimeOutput((event: RuntimeEvent) => {
-      const parsed = extractEventText(event.payload);
+      const parsed = extractEvent(event.payload);
+
       if (event.kind === "jsonrpc" && parsed.text) {
         setMessages(current => [...current, { id: crypto.randomUUID(), role: "assistant", text: parsed.text! }]);
       }
@@ -95,7 +103,17 @@ export default function App() {
         ? payload.sessionId
         : null;
 
-      if (incomingSessionId && parsed.type === "session/title") {
+      if (parsed.type === "approval/asked" && incomingSessionId && parsed.data) {
+        const id = typeof parsed.data.id === "string" ? parsed.data.id : crypto.randomUUID();
+        const toolName = typeof parsed.data.toolName === "string" ? parsed.data.toolName : "unknown tool";
+        setApproval({ id, toolName, sessionId: incomingSessionId });
+      }
+
+      if (parsed.type === "approval/decided" && parsed.data && typeof parsed.data.id === "string") {
+        setApproval(current => current?.id === parsed.data!.id ? null : current);
+      }
+
+      if (incomingSessionId) {
         void sessionsList().then(setSessions).catch(() => undefined);
       }
 
@@ -203,9 +221,7 @@ export default function App() {
         contentBlocks: [{ type: "text", text }]
       });
       setSessions(await sessionsList());
-    } catch (cause) {
-      setError(String(cause));
-    }
+    } catch (cause) { setError(String(cause)); }
   }
 
   async function healthCheck() {
@@ -214,6 +230,24 @@ export default function App() {
       setError(result.ok ? null : result.reason);
       setSnapshot(await runtimeStatus());
     } catch (cause) { setError(String(cause)); }
+  }
+
+  async function checkUpdates() {
+    setCheckingUpdate(true);
+    setError(null);
+    try { setUpdate(await updateCheck()); }
+    catch (cause) { setError(String(cause)); }
+    finally { setCheckingUpdate(false); }
+  }
+
+  async function installUpdate() {
+    if (!update) return;
+    setCheckingUpdate(true);
+    try { await updateInstall(update); }
+    catch (cause) {
+      setError(String(cause));
+      setCheckingUpdate(false);
+    }
   }
 
   return (
@@ -236,11 +270,11 @@ export default function App() {
                   <strong>{session.title}</strong>
                   <span>{session.status} · {new Date(session.lastUsedAt * 1000).toLocaleString()}</span>
                 </button>
-                <button className="session-delete" title="移除本地索引" onClick={() => void forgetSession(session)}>×</button>
+                <button className="session-delete" title="仅移除 Desktop 索引，不删除 Harness 会话数据" onClick={() => void forgetSession(session)}>×</button>
               </div>
             ))}
           </div>
-          {sessions.length === 0 && <div className="muted">尚无 Desktop 索引，会话正文仍由 Harness 持久化。</div>}
+          {sessions.length === 0 && <div className="muted">尚无 Desktop 索引；会话正文由 Harness 持久化。</div>}
         </section>
 
         <section className="side-card">
@@ -250,6 +284,15 @@ export default function App() {
             <strong>{snapshot?.status ?? "loading"}</strong>
           </div>
           <div className="muted">{manifest?.harnessVersion ?? "manifest unavailable"}</div>
+          <button className="ghost-button" onClick={() => void checkUpdates()}>
+            {checkingUpdate ? "检查中..." : "检查更新"}
+          </button>
+          {update && (
+            <div className="update-card">
+              <div><strong>发现 DSH Desktop {update.version}</strong></div>
+              <button className="primary-button" onClick={() => void installUpdate()}>下载并安装</button>
+            </div>
+          )}
         </section>
 
         <section className="side-card">
@@ -284,6 +327,14 @@ export default function App() {
           </div>
         </header>
 
+        {approval && (
+          <div className="approval-banner">
+            <strong>Runtime 请求审批</strong>
+            <span>{approval.toolName} · request {approval.id}</span>
+            <small>当前 SDK JSON-RPC 契约只有 initialize / session-prompt / shutdown，没有 approval/respond；Desktop 仅展示 durable approval 事件，不会擅自构造未公开的控制协议。</small>
+          </div>
+        )}
+
         {error && <div className="error-banner">{error}</div>}
 
         <section className="chat-panel">
@@ -292,7 +343,7 @@ export default function App() {
               <div className="empty-state">
                 <div className="empty-icon">◎</div>
                 <h2>Desktop Host 已准备</h2>
-                <p>Desktop 只维护会话索引，不复制 Harness transcript；Workspace 与 DSH_HOME 也保持分离。</p>
+                <p>Desktop 只维护会话索引，不复制 Harness transcript；Workspace、DSH_HOME 和临时目录彼此隔离。</p>
               </div>
             ) : messages.map(message => (
               <article className={"message " + message.role} key={message.id}>
