@@ -1,12 +1,10 @@
 # Bundled Harness Runtime
 
-DSH Desktop does not follow a dsh executable on PATH.
+DSH Desktop packages the exact runtime declared in `dsh-runtime.json` and never follows an arbitrary `dsh` executable on PATH in release builds.
 
-The packaged build expects the exact runtime declared in `dsh-runtime.json`:
+Windows x64 runtime artifact:
 
-`runtime/bin/deepseek-harness-sdk-runtime-windows-x64.exe`
-
-Development can override the executable with an absolute `DSH_RUNTIME_PATH`.
+`deepseek-harness-sdk-runtime-win-x64.exe`
 
 The runtime receives:
 
@@ -14,4 +12,6 @@ The runtime receives:
 - `DSH_HOME=<Desktop AppData>/harness`
 - `cwd=<selected Workspace>`
 
-Desktop owns neither Harness session storage nor Workspace files.
+The official runtime wheel also contains ripgrep and Office sidecars; the preparation script stages all three into `runtime/bin`.
+
+For local development only, set `DSH_RUNTIME_PATH` to an absolute executable path. The packaged build does not use this override.
