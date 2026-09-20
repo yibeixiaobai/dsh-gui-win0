@@ -1,5 +1,4 @@
 use std::{
-  collections::HashMap,
   io::Write,
   path::{Path, PathBuf},
   process::{Child, ChildStdin, Command, Stdio},
@@ -46,7 +45,8 @@ pub struct HealthCheck {
   pub reason: String,
 }
 
-type Pending = HashMap<u64, mpsc::Sender<Result<Value, String>>>;
+type PendingResult = Result<Value, String>;
+type Pending = std::collections::HashMap<u64, mpsc::Sender<PendingResult>>;
 
 struct RuntimeInner {
   status: RuntimeStatus,
@@ -75,7 +75,7 @@ impl RuntimeSupervisor {
         workspace: None,
         executable: None,
         last_error: None,
-        pending: HashMap::new(),
+        pending: Default::default(),
       })),
     }
   }
@@ -146,10 +146,11 @@ impl RuntimeSupervisor {
     inner.child = Some(child);
     inner.status = RuntimeStatus::Running;
 
-    let event_app = app.clone();
+    let stdout_app = app.clone();
     let shared = Arc::clone(&self.inner);
     thread::spawn(move || {
       use std::io::{BufRead, BufReader};
+
       for line in BufReader::new(stdout).lines() {
         match line {
           Ok(line) => {
@@ -160,10 +161,9 @@ impl RuntimeSupervisor {
               if let Some(id) = crate::runtime::protocol::response_id(&payload) {
                 let waiter = shared.lock().ok().and_then(|mut guard| guard.pending.remove(&id));
                 if let Some(waiter) = waiter {
-                  let result = if let Some(error) = payload.get("error") {
-                    Err(error.to_string())
-                  } else {
-                    Ok(payload)
+                  let result = match payload.get("error") {
+                    Some(error) => Err(error.to_string()),
+                    None => Ok(payload),
                   };
                   let _ = waiter.send(result);
                   continue;
@@ -171,7 +171,7 @@ impl RuntimeSupervisor {
               }
             }
 
-            let _ = event_app.emit(
+            let _ = stdout_app.emit(
               "runtime:event",
               crate::runtime::protocol::RuntimeEvent {
                 kind: crate::runtime::protocol::RuntimeEventKind::JsonRpc,
@@ -180,7 +180,7 @@ impl RuntimeSupervisor {
             );
           }
           Err(error) => {
-            let _ = event_app.emit(
+            let _ = stdout_app.emit(
               "runtime:event",
               crate::runtime::protocol::RuntimeEvent {
                 kind: crate::runtime::protocol::RuntimeEventKind::Error,
@@ -193,13 +193,13 @@ impl RuntimeSupervisor {
       }
     });
 
-    let event_app = app.clone();
+    let stderr_app = app.clone();
     thread::spawn(move || {
       use std::io::{BufRead, BufReader};
       for line in BufReader::new(stderr).lines() {
         match line {
           Ok(line) => {
-            let _ = event_app.emit(
+            let _ = stderr_app.emit(
               "runtime:event",
               crate::runtime::protocol::RuntimeEvent {
                 kind: crate::runtime::protocol::RuntimeEventKind::Stderr,
@@ -212,43 +212,60 @@ impl RuntimeSupervisor {
       }
     });
 
-    let event_app = app.clone();
+    let monitor_app = app.clone();
     let shared = Arc::clone(&self.inner);
-    thread::spawn(move || {
-      let exit_code = {
+    thread::spawn(move || loop {
+      let exit = {
         let mut guard = match shared.lock() {
           Ok(guard) => guard,
           Err(_) => return,
         };
         let Some(child) = guard.child.as_mut() else { return };
-        child.wait().ok().and_then(|status| status.code())
+        match child.try_wait() {
+          Ok(result) => result,
+          Err(error) => {
+            guard.last_error = Some(error.to_string());
+            None
+          }
+        }
       };
 
-      if let Ok(mut guard) = shared.lock() {
-        guard.child = None;
-        guard.stdin = None;
-        guard.pid = None;
-        let message = format!("runtime exited: {:?}", exit_code);
-        let pending = std::mem::take(&mut guard.pending);
-        if guard.status == RuntimeStatus::Stopping {
-          guard.status = RuntimeStatus::Stopped;
-          guard.last_error = None;
-        } else {
-          guard.status = RuntimeStatus::Crashed;
-          guard.last_error = Some(message.clone());
-        }
-        for (_, sender) in pending {
-          let _ = sender.send(Err(message.clone()));
-        }
-      }
+      match exit {
+        Some(status) => {
+          let code = status.code();
+          if let Ok(mut guard) = shared.lock() {
+            guard.child = None;
+            guard.stdin = None;
+            guard.pid = None;
 
-      let _ = event_app.emit(
-        "runtime:event",
-        crate::runtime::protocol::RuntimeEvent {
-          kind: crate::runtime::protocol::RuntimeEventKind::Terminated,
-          payload: json!({ "code": exit_code }),
-        },
-      );
+            let stopping = guard.status == RuntimeStatus::Stopping;
+            let message = format!("runtime exited: {:?}", code);
+            let pending = std::mem::take(&mut guard.pending);
+
+            if stopping {
+              guard.status = RuntimeStatus::Stopped;
+              guard.last_error = None;
+            } else {
+              guard.status = RuntimeStatus::Crashed;
+              guard.last_error = Some(message.clone());
+            }
+
+            for sender in pending.into_values() {
+              let _ = sender.send(Err(message.clone()));
+            }
+          }
+
+          let _ = monitor_app.emit(
+            "runtime:event",
+            crate::runtime::protocol::RuntimeEvent {
+              kind: crate::runtime::protocol::RuntimeEventKind::Terminated,
+              payload: json!({ "code": code }),
+            },
+          );
+          return;
+        }
+        None => thread::sleep(Duration::from_millis(100)),
+      }
     });
 
     Ok(snapshot_locked(&inner, &paths, &manifest))
@@ -261,7 +278,7 @@ impl RuntimeSupervisor {
 
     let request = crate::runtime::protocol::JsonRpcRequest::new(method, params);
     let line = request.to_line().map_err(|e| RuntimeError::Protocol(e.to_string()))?;
-    let (sender, receiver) = mpsc::channel::<Result<Value, String>>();
+    let (sender, receiver) = mpsc::channel::<PendingResult>();
 
     let mut stdin = {
       let mut inner = self.inner.lock().map_err(|_| RuntimeError::StatePoisoned)?;
@@ -281,7 +298,6 @@ impl RuntimeSupervisor {
       inner.pending.remove(&request.id);
       return Err(RuntimeError::Io(error.to_string()));
     }
-
     drop(inner);
 
     match receiver.recv_timeout(Duration::from_secs(60)) {
@@ -293,19 +309,21 @@ impl RuntimeSupervisor {
         }
         Err(RuntimeError::Timeout(request.method))
       }
-      Err(mpsc::RecvTimeoutError::Disconnected) => Err(RuntimeError::Protocol("runtime response channel closed".into())),
+      Err(mpsc::RecvTimeoutError::Disconnected) => {
+        Err(RuntimeError::Protocol("runtime response channel closed".into()))
+      }
     }
   }
 
   pub fn stop(&self) -> Result<(), RuntimeError> {
-    let mut child = {
+    {
       let mut inner = self.inner.lock().map_err(|_| RuntimeError::StatePoisoned)?;
       if inner.status == RuntimeStatus::Stopped {
         return Ok(());
       }
 
       inner.status = RuntimeStatus::Stopping;
-      for (_, sender) in std::mem::take(&mut inner.pending) {
+      for sender in std::mem::take(&mut inner.pending).into_values() {
         let _ = sender.send(Err("runtime is stopping".into()));
       }
 
@@ -315,21 +333,37 @@ impl RuntimeSupervisor {
           let _ = stdin.flush();
         }
       }
-
       inner.stdin.take();
-      inner.child.take()
-    };
+    }
 
-    if let Some(mut process) = child.take() {
-      let deadline = Instant::now() + Duration::from_secs(5);
-      loop {
-        match process.try_wait() {
-          Ok(Some(_)) => break,
-          Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
-          Ok(None) => { let _ = process.kill(); break; }
-          Err(_) => { let _ = process.kill(); break; }
+    let deadline = Instant::now() + Duration::from_secs(5);
+
+    loop {
+      let done = {
+        let mut inner = self.inner.lock().map_err(|_| RuntimeError::StatePoisoned)?;
+        match inner.child.as_mut() {
+          None => true,
+          Some(child) => match child.try_wait() {
+            Ok(Some(_)) => true,
+            Ok(None) if Instant::now() >= deadline => {
+              let _ = child.kill();
+              let _ = child.try_wait();
+              true
+            }
+            Ok(None) => false,
+            Err(_) => {
+              let _ = child.kill();
+              let _ = child.try_wait();
+              true
+            }
+          },
         }
+      };
+
+      if done {
+        break;
       }
+      thread::sleep(Duration::from_millis(50));
     }
 
     if let Ok(mut inner) = self.inner.lock() {
@@ -338,6 +372,7 @@ impl RuntimeSupervisor {
       inner.stdin = None;
       inner.pid = None;
     }
+
     Ok(())
   }
 
@@ -357,24 +392,33 @@ impl RuntimeSupervisor {
   ) -> Result<HealthCheck, RuntimeError> {
     let snapshot = self.snapshot(app)?;
     if snapshot.status != RuntimeStatus::Running {
-      return Ok(HealthCheck { ok: false, reason: format!("runtime status is {:?}", snapshot.status) });
+      return Ok(HealthCheck {
+        ok: false,
+        reason: format!("runtime status is {:?}", snapshot.status),
+      });
     }
     if snapshot.pid.is_none() || snapshot.executable.is_none() {
-      return Ok(HealthCheck { ok: false, reason: "runtime process metadata is incomplete".into() });
+      return Ok(HealthCheck {
+        ok: false,
+        reason: "runtime process metadata is incomplete".into(),
+      });
     }
-    Ok(HealthCheck { ok: true, reason: "runtime process is running".into() })
+    Ok(HealthCheck {
+      ok: true,
+      reason: "runtime process is running",
+    })
   }
 
   pub fn is_running(&self) -> bool {
-    self.inner.lock().map(|inner| inner.status == RuntimeStatus::Running).unwrap_or(false)
+    self
+      .inner
+      .lock()
+      .map(|inner| inner.status == RuntimeStatus::Running)
+      .unwrap_or(false)
   }
 }
 
-fn snapshot_locked(
-  inner: &RuntimeInner,
-  paths: &AppPaths,
-  manifest: &RuntimeManifest,
-) -> RuntimeSnapshot {
+fn snapshot_locked(inner: &RuntimeInner, paths: &AppPaths, manifest: &RuntimeManifest) -> RuntimeSnapshot {
   RuntimeSnapshot {
     status: inner.status,
     pid: inner.pid,
@@ -388,8 +432,12 @@ fn snapshot_locked(
 
 fn validate_workspace(input: &str) -> Result<PathBuf, RuntimeError> {
   let path = PathBuf::from(input);
-  if !path.is_absolute() { return Err(RuntimeError::Workspace("workspace must be absolute".into())); }
-  if !path.is_dir() { return Err(RuntimeError::Workspace("workspace must be an existing directory".into())); }
+  if !path.is_absolute() {
+    return Err(RuntimeError::Workspace("workspace must be absolute".into()));
+  }
+  if !path.is_dir() {
+    return Err(RuntimeError::Workspace("workspace must be an existing directory".into()));
+  }
   Ok(path)
 }
 
@@ -398,28 +446,52 @@ fn resolve_runtime_executable<R: tauri::Runtime>(
 ) -> Result<PathBuf, RuntimeError> {
   if let Ok(path) = std::env::var("DSH_RUNTIME_PATH") {
     let path = PathBuf::from(path);
-    if path.is_file() { return Ok(path); }
+    if path.is_file() {
+      return Ok(path);
+    }
   }
 
-  let resource_dir = app.path().resource_dir().map_err(|e| RuntimeError::Path(e.to_string()))?;
+  let resource_dir = app
+    .path()
+    .resource_dir()
+    .map_err(|e| RuntimeError::Path(e.to_string()))?;
   let candidate = resource_dir.join("runtime").join("bin").join(runtime_name());
-  if candidate.is_file() { Ok(candidate) }
-  else { Err(RuntimeError::RuntimeMissing(candidate.display().to_string())) }
+
+  if candidate.is_file() {
+    Ok(candidate)
+  } else {
+    Err(RuntimeError::RuntimeMissing(candidate.display().to_string()))
+  }
 }
 
-fn validate_runtime_artifact(executable: &Path, manifest: &RuntimeManifest) -> Result<(), RuntimeError> {
+fn validate_runtime_artifact(
+  executable: &Path,
+  manifest: &RuntimeManifest,
+) -> Result<(), RuntimeError> {
   let expected = manifest.runtime_artifact.to_lowercase();
-  let actual = executable.file_stem().and_then(|n| n.to_str()).unwrap_or_default().to_lowercase();
+  let actual = executable
+    .file_stem()
+    .and_then(|n| n.to_str())
+    .unwrap_or_default()
+    .to_lowercase();
+
   if actual != expected {
-    return Err(RuntimeError::RuntimeMismatch(format!("runtime '{}' does not match pinned artifact '{}'", actual, expected)));
+    return Err(RuntimeError::RuntimeMismatch(format!(
+      "runtime '{}' does not match pinned artifact '{}'",
+      actual, expected
+    )));
   }
   Ok(())
 }
 
 fn runtime_name() -> &'static str {
-  if cfg!(windows) { "deepseek-harness-sdk-runtime-windows-x64.exe" }
-  else if cfg!(target_arch = "aarch64") { "deepseek-harness-sdk-runtime-macos-arm64" }
-  else { "deepseek-harness-sdk-runtime-linux-x64" }
+  if cfg!(windows) {
+    "deepseek-harness-sdk-runtime-windows-x64.exe"
+  } else if cfg!(target_arch = "aarch64") {
+    "deepseek-harness-sdk-runtime-macos-arm64"
+  } else {
+    "deepseek-harness-sdk-runtime-linux-x64"
+  }
 }
 
 #[derive(Debug, thiserror::Error)]
