@@ -14,18 +14,12 @@ $targetDir = Join-Path $root "runtime\bin"
 Remove-Item $buildRoot -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $buildRoot, $targetDir | Out-Null
 
-$sourceUrl = "https://github.com/deepseek-ai/deepseek-harness/archive/refs/tags/$tag.zip"
-Write-Host "Downloading upstream Harness $tag from $sourceUrl"
-Invoke-WebRequest -Uri $sourceUrl -OutFile $archive
-
-Expand-Archive -Path $archive -DestinationPath $buildRoot
-if (-not (Test-Path (Join-Path $sourceRoot "package.json"))) {
-  $sourceRoot = Get-ChildItem $buildRoot -Directory |
-    Where-Object { Test-Path (Join-Path $_.FullName "package.json") } |
-    Select-Object -First 1 |
-    ForEach-Object { $_.FullName }
+$repoUrl = "https://github.com/deepseek-ai/deepseek-harness.git"
+Write-Host "Cloning upstream Harness $tag from $repoUrl"
+git -c advice.detachedHead=false clone --depth 1 --branch $tag $repoUrl $sourceRoot
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $sourceRoot ".git"))) {
+  throw "Unable to clone upstream Harness tag $tag."
 }
-if (-not $sourceRoot) { throw "Upstream Harness source directory was not found." }
 
 Push-Location $sourceRoot
 try {
