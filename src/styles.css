@@ -7,13 +7,22 @@ body { margin: 0; min-width: 1120px; min-height: 100vh; background: #0e1014; }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .5; }
-.app-shell { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 100vh; }
-.sidebar { display: flex; flex-direction: column; gap: 14px; padding: 20px; border-right: 1px solid #252a33; background: #11141a; }
+.app-shell { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: 100vh; }
+.sidebar { display: flex; flex-direction: column; gap: 14px; padding: 20px; border-right: 1px solid #252a33; background: #11141a; overflow: auto; }
 .brand { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
 .brand-mark { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: #e7ebf3; color: #111318; font-weight: 800; }
 .brand strong, .brand span { display: block; }
 .brand span { color: #8992a1; font-size: 12px; margin-top: 2px; }
 .side-card { display: grid; gap: 8px; padding: 13px; border: 1px solid #252a33; background: #151922; border-radius: 12px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.small-button { width: 26px; height: 26px; padding: 0; border-radius: 8px; border: 1px solid #303744; background: #171b22; color: #e6eaf0; }
+.session-list { display: grid; gap: 4px; max-height: 300px; overflow: auto; }
+.session-item { display: grid; grid-template-columns: 1fr 28px; gap: 4px; align-items: stretch; }
+.session-item.selected .session-main { border-color: #5e6675; background: #1b2029; }
+.session-main { min-width: 0; text-align: left; display: grid; gap: 3px; padding: 9px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: #eef1f5; }
+.session-main span { color: #788190; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-delete { border: 1px solid transparent; border-radius: 8px; background: transparent; color: #737b89; }
+.session-delete:hover { border-color: #3a404c; background: #191d24; }
 .label, .eyebrow { color: #7f8795; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
 .muted { color: #8a92a0; font-size: 12px; }
 .status-row { display: flex; gap: 8px; align-items: center; }
@@ -28,12 +37,16 @@ input:focus, textarea:focus { border-color: #667080; }
 .danger-button { background: #1c1b1f; }
 .ghost-button { background: #171b22; }
 .sidebar > .ghost-button { width: 100%; }
-.main-panel { display: grid; grid-template-rows: auto 1fr 180px; min-width: 0; }
+.update-card { display: grid; gap: 8px; padding: 9px; border: 1px solid #39404c; border-radius: 9px; background: #13171d; font-size: 12px; }
+.main-panel { display: grid; grid-template-rows: auto auto 1fr 180px; min-width: 0; }
 .topbar { display: flex; justify-content: space-between; gap: 18px; align-items: center; padding: 20px 26px; border-bottom: 1px solid #252a33; background: #101318; }
 .topbar h1 { margin: 4px 0 0; font-size: 22px; }
 .topbar-meta { display: grid; gap: 4px; text-align: right; color: #858e9e; font-size: 11px; }
 .topbar-meta code { color: #b9c1ce; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.error-banner { margin: 14px 26px 0; padding: 10px 12px; border: 1px solid #664247; background: #25171a; color: #f2b9c1; border-radius: 9px; }
+.error-banner, .approval-banner { margin: 14px 26px 0; padding: 10px 12px; border-radius: 9px; display: grid; gap: 3px; }
+.error-banner { border: 1px solid #664247; background: #25171a; color: #f2b9c1; }
+.approval-banner { border: 1px solid #5d5433; background: #211d12; color: #e5dbb9; }
+.approval-banner span, .approval-banner small { color: #a99f86; }
 .chat-panel { min-height: 0; display: grid; grid-template-rows: 1fr auto; padding: 20px 26px; gap: 18px; }
 .chat-scroll { min-height: 0; overflow: auto; padding-right: 6px; }
 .empty-state { height: 100%; display: grid; place-items: center; align-content: center; text-align: center; color: #858e9d; }
