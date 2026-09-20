@@ -3,9 +3,10 @@ dist/
 .vite/
 .DS_Store
 *.log
+.desktop-build/
 src-tauri/target/
 .env
 .env.*
-! .env.example
-src-tauri/binaries/*
-!src-tauri/binaries/.gitkeep
+!.env.example
+runtime/bin/*
+!runtime/bin/.gitkeep
