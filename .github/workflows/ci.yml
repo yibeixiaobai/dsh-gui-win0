@@ -21,24 +21,17 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
 
-  native:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo check --manifest-path src-tauri/Cargo.toml
-
   windows-package:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
