@@ -7,12 +7,16 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 pub struct JsonRpcRequest {
   pub id: u64,
   pub method: String,
-  pub params: Option<Value>
+  pub params: Option<Value>,
 }
 
 impl JsonRpcRequest {
   pub fn new(method: impl Into<String>, params: Option<Value>) -> Self {
-    Self { id: NEXT_ID.fetch_add(1, Ordering::Relaxed), method: method.into(), params }
+    Self {
+      id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+      method: method.into(),
+      params,
+    }
   }
 
   pub fn to_line(&self) -> Result<String, serde_json::Error> {
@@ -28,9 +32,27 @@ impl JsonRpcRequest {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum RuntimeEventKind { JsonRpc, Stderr, Terminated, Error }
+pub enum RuntimeEventKind {
+  JsonRpc,
+  Stderr,
+  Terminated,
+  Error,
+}
 
 #[derive(Debug, Clone, Serialize)]
-pub struct RuntimeEvent { pub kind: RuntimeEventKind, pub payload: Value }
+pub struct RuntimeEvent {
+  pub kind: RuntimeEventKind,
+  pub payload: Value,
+}
 
-pub fn parse_json_line(line: &str) -> Option<Value> { serde_json::from_str(line.trim()).ok() }
+pub fn parse_json_line(line: &str) -> Option<Value> {
+  serde_json::from_str(line.trim()).ok()
+}
+
+pub fn response_id(value: &Value) -> Option<u64> {
+  value.get("id").and_then(Value::as_u64)
+}
+
+pub fn is_response(value: &Value) -> bool {
+  value.get("id").is_some()
+}
