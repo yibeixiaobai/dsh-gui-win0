@@ -39,14 +39,20 @@ function extractEvent(value: unknown): { text: string | null; type: string | nul
   const event = raw as Record<string, unknown>;
   const type = typeof event.type === "string" ? event.type : null;
   const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : null;
-  if (typeof event.text === "string") return { text: event.text, type, data };
-  const content = event.content;
-  if (!Array.isArray(content)) return { text: null, type, data };
-  const texts = content
-    .filter(block => block && typeof block === "object" && (block as Record<string, unknown>).type === "text")
-    .map(block => String((block as Record<string, unknown>).text ?? ""))
-    .filter(Boolean);
-  return { text: texts.length ? texts.join("") : null, type, data };
+
+  if (type === "assistant/message" && data?.message && typeof data.message === "object") {
+    const message = data.message as Record<string, unknown>;
+    const content = message.content;
+    if (Array.isArray(content)) {
+      const texts = content
+        .filter(block => block && typeof block === "object" && (block as Record<string, unknown>).type === "text")
+        .map(block => String((block as Record<string, unknown>).text ?? ""))
+        .filter(Boolean);
+      return { text: texts.length ? texts.join("") : null, type, data };
+    }
+  }
+
+  return { text: null, type, data };
 }
 
 export default function App() {
@@ -152,7 +158,7 @@ export default function App() {
         ...(settings.reasoningEffort ? { reasoningEffort: settings.reasoningEffort } : {})
       });
 
-      const serverInfo = (response as { result?: { serverInfo?: { name?: string } } })?.result?.serverInfo;
+      const serverInfo = (response as { result?: { serverInfo?: { name?: string; version?: string } } })?.result?.serverInfo;
       if (serverInfo?.name !== "deepseek-harness-sdk-runtime") {
         throw new Error("Runtime handshake returned an unexpected server identity.");
       }
@@ -172,8 +178,11 @@ export default function App() {
   async function disconnect() {
     setBusy(true);
     setError(null);
-    try { setSnapshot(await runtimeStop()); }
-    catch (cause) { setError(String(cause)); }
+    try {
+      await runtimeStop();
+      await sessionSetStatus(sessionId, "stopped").catch(() => undefined);
+      setSnapshot(await runtimeStatus());
+    } catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
   }
 
@@ -331,7 +340,7 @@ export default function App() {
           <div className="approval-banner">
             <strong>Runtime 请求审批</strong>
             <span>{approval.toolName} · request {approval.id}</span>
-            <small>当前 SDK JSON-RPC 契约只有 initialize / session-prompt / shutdown，没有 approval/respond；Desktop 仅展示 durable approval 事件，不会擅自构造未公开的控制协议。</small>
+            <small>当前公开 SDK JSON-RPC 没有 approval/respond 方法。Desktop 不会伪造未公开协议，只展示 Harness 的 durable approval 事件。</small>
           </div>
         )}
 
