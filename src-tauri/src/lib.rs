@@ -98,7 +98,15 @@ fn update_check() -> Result<Option<UpdateInfo>, String> {
 }
 
 #[tauri::command]
-fn update_install(app: tauri::AppHandle, info: UpdateInfo) -> Result<(), String> {
+fn update_install(
+  app: tauri::AppHandle,
+  supervisor: State<'_, RuntimeSupervisor>,
+  info: UpdateInfo,
+) -> Result<(), String> {
+  if supervisor.is_running() {
+    supervisor.stop().map_err(|e| e.to_string())?;
+  }
+
   let installer = download_installer(&app, &info)?;
   launch_installer(installer)?;
 
