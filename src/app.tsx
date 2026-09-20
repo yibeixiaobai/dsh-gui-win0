@@ -65,7 +65,7 @@ export default function App() {
     reasoningEffort: "",
     workspace: null
   });
-  const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
+  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
