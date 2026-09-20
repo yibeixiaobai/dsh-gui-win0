@@ -10,10 +10,15 @@ import {
   runtimeStatus,
   runtimeStop,
   saveSettings,
+  sessionsList,
+  sessionRegister,
+  sessionForget,
+  sessionSetStatus,
   type DesktopSettings,
   type RuntimeEvent,
   type RuntimeManifest,
-  type RuntimeSnapshot
+  type RuntimeSnapshot,
+  type SessionSummary
 } from "./api";
 
 type ChatMessage = { id: string; role: "user" | "assistant"; text: string };
@@ -23,31 +28,34 @@ function jsonText(value: unknown): string {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
-function extractText(value: unknown): string | null {
-  if (!value || typeof value !== "object") return null;
+function extractEventText(value: unknown): { text: string | null; type: string | null } {
+  if (!value || typeof value !== "object") return { text: null, type: null };
   const event = (value as Record<string, unknown>).event;
-  if (!event || typeof event !== "object") return null;
+  if (!event || typeof event !== "object") return { text: null, type: null };
   const record = event as Record<string, unknown>;
-  if (typeof record.text === "string") return record.text;
-  const content = record.content;
-  if (!Array.isArray(content)) return null;
-  const texts = content
-    .filter(block => block && typeof block === "object" && (block as Record<string, unknown>).type === "text")
-    .map(block => String((block as Record<string, unknown>).text ?? ""))
-    .filter(Boolean);
-  return texts.length ? texts.join("") : null;
+  const type = typeof record.type === "string" ? record.type : null;
+  if (typeof record.text === "string") return { text: record.text, type };
+  if (Array.isArray(record.content)) {
+    const texts = record.content
+      .filter(block => block && typeof block === "object" && (block as Record<string, unknown>).type === "text")
+      .map(block => String((block as Record<string, unknown>).text ?? ""))
+      .filter(Boolean);
+    return { text: texts.length ? texts.join("") : null, type };
+  }
+  return { text: null, type };
 }
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
   const [manifest, setManifest] = useState<RuntimeManifest | null>(null);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [settings, setSettings] = useState<DesktopSettings>({
     provider: "deepseek-official",
     model: "",
     reasoningEffort: "",
     workspace: null
   });
-  const [sessionId] = useState(() => crypto.randomUUID());
+  const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
@@ -62,11 +70,14 @@ export default function App() {
   }, [settings.workspace]);
 
   useEffect(() => {
-    void Promise.all([runtimeStatus(), runtimeManifest(), getSettings()])
-      .then(([status, nextManifest, nextSettings]) => {
+    void Promise.all([runtimeStatus(), runtimeManifest(), getSettings(), sessionsList()])
+      .then(([status, nextManifest, nextSettings, nextSessions]) => {
         setSnapshot(status);
         setManifest(nextManifest);
         setSettings(nextSettings);
+        setSessions(nextSessions);
+        const matching = nextSessions.find(item => item.workspace === nextSettings.workspace);
+        if (matching) setSessionId(matching.id);
       })
       .catch(cause => setError(String(cause)));
   }, []);
@@ -74,13 +85,24 @@ export default function App() {
   useEffect(() => {
     let cleanup: (() => void) | undefined;
     void listenRuntimeOutput((event: RuntimeEvent) => {
-      const text = extractText(event.payload);
-      if (event.kind === "jsonrpc" && text) {
-        setMessages(current => [...current, { id: crypto.randomUUID(), role: "assistant", text }]);
+      const parsed = extractEventText(event.payload);
+      if (event.kind === "jsonrpc" && parsed.text) {
+        setMessages(current => [...current, { id: crypto.randomUUID(), role: "assistant", text: parsed.text! }]);
       }
+
+      const payload = event.payload as Record<string, unknown> | null;
+      const incomingSessionId = payload && typeof payload === "object" && typeof payload.sessionId === "string"
+        ? payload.sessionId
+        : null;
+
+      if (incomingSessionId && parsed.type === "session/title") {
+        void sessionsList().then(setSessions).catch(() => undefined);
+      }
+
       setLogs(current => [jsonText(event.payload), ...current].slice(0, 120));
       void runtimeStatus().then(setSnapshot).catch(() => undefined);
     }).then(unlisten => { cleanup = unlisten; });
+
     return () => cleanup?.();
   }, []);
 
@@ -117,6 +139,8 @@ export default function App() {
         throw new Error("Runtime handshake returned an unexpected server identity.");
       }
 
+      const session = await sessionRegister(sessionId, settings.workspace, "New session");
+      setSessions(current => [session, ...current.filter(item => item.id !== session.id)]);
       setSnapshot(await runtimeStatus());
     } catch (cause) {
       if (started) await runtimeStop().catch(() => undefined);
@@ -135,14 +159,53 @@ export default function App() {
     finally { setBusy(false); }
   }
 
+  async function createSession() {
+    const id = crypto.randomUUID();
+    setSessionId(id);
+    setMessages([]);
+    setPrompt("");
+    if (settings.workspace) {
+      try {
+        const session = await sessionRegister(id, settings.workspace, "New session");
+        setSessions(current => [session, ...current]);
+      } catch (cause) { setError(String(cause)); }
+    }
+  }
+
+  async function selectSession(session: SessionSummary) {
+    if (session.workspace !== settings.workspace) {
+      const next = { ...settings, workspace: session.workspace };
+      setSettings(next);
+      await saveSettings(next);
+    }
+    setSessionId(session.id);
+    setMessages([]);
+    await sessionSetStatus(session.id, "active").catch(() => undefined);
+  }
+
+  async function forgetSession(session: SessionSummary) {
+    await sessionForget(session.id);
+    setSessions(current => current.filter(item => item.id !== session.id));
+    if (session.id === sessionId) await createSession();
+  }
+
   async function sendPrompt() {
     const text = prompt.trim();
     if (!ready || !text) return;
+
     setPrompt("");
     setMessages(current => [...current, { id: crypto.randomUUID(), role: "user", text }]);
+
     try {
-      await runtimeRequest("session/prompt", { sessionId, contentBlocks: [{ type: "text", text }] });
-    } catch (cause) { setError(String(cause)); }
+      await sessionRegister(sessionId, settings.workspace!, text.slice(0, 80));
+      await runtimeRequest("session/prompt", {
+        sessionId,
+        contentBlocks: [{ type: "text", text }]
+      });
+      setSessions(await sessionsList());
+    } catch (cause) {
+      setError(String(cause));
+    }
   }
 
   async function healthCheck() {
@@ -160,6 +223,25 @@ export default function App() {
           <div className="brand-mark">D</div>
           <div><strong>DSH Desktop</strong><span>Native Runtime Host</span></div>
         </div>
+
+        <section className="side-card">
+          <div className="section-heading">
+            <div className="label">Sessions</div>
+            <button className="small-button" onClick={createSession}>＋</button>
+          </div>
+          <div className="session-list">
+            {sessions.slice(0, 12).map(session => (
+              <div className={"session-item " + (session.id === sessionId ? "selected" : "")} key={session.id}>
+                <button className="session-main" onClick={() => void selectSession(session)}>
+                  <strong>{session.title}</strong>
+                  <span>{session.status} · {new Date(session.lastUsedAt * 1000).toLocaleString()}</span>
+                </button>
+                <button className="session-delete" title="移除本地索引" onClick={() => void forgetSession(session)}>×</button>
+              </div>
+            ))}
+          </div>
+          {sessions.length === 0 && <div className="muted">尚无 Desktop 索引，会话正文仍由 Harness 持久化。</div>}
+        </section>
 
         <section className="side-card">
           <div className="label">Runtime</div>
@@ -210,7 +292,7 @@ export default function App() {
               <div className="empty-state">
                 <div className="empty-icon">◎</div>
                 <h2>Desktop Host 已准备</h2>
-                <p>Workspace、DSH_HOME 与 Runtime 生命周期彼此隔离。Desktop 不会把自己的状态写进项目目录。</p>
+                <p>Desktop 只维护会话索引，不复制 Harness transcript；Workspace 与 DSH_HOME 也保持分离。</p>
               </div>
             ) : messages.map(message => (
               <article className={"message " + message.role} key={message.id}>
