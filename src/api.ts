@@ -50,26 +50,31 @@ export interface SessionSummary {
   status: string;
 }
 
+export interface UpdateInfo {
+  version: string;
+  tag: string;
+  releaseUrl: string;
+  installerUrl: string;
+  checksumUrl?: string | null;
+  prerelease: boolean;
+}
+
 export const runtimeStatus = () => invoke<RuntimeSnapshot>("runtime_status");
-export const runtimeStart = (workspace: string, settings: DesktopSettings) =>
-  invoke<RuntimeSnapshot>("runtime_start", { workspace, settings });
+export const runtimeStart = (workspace: string, settings: DesktopSettings) => invoke<RuntimeSnapshot>("runtime_start", { workspace, settings });
 export const runtimeStop = () => invoke<RuntimeSnapshot>("runtime_stop");
-export const runtimeRequest = (method: string, params?: Record<string, unknown>) =>
-  invoke<unknown>("runtime_request", { method, params });
-export const runtimeHealthCheck = () =>
-  invoke<{ ok: boolean; reason: string }>("runtime_health_check");
+export const runtimeRequest = (method: string, params?: Record<string, unknown>) => invoke<unknown>("runtime_request", { method, params });
+export const runtimeHealthCheck = () => invoke<{ ok: boolean; reason: string }>("runtime_health_check");
 export const getSettings = () => invoke<DesktopSettings>("settings_get");
-export const saveSettings = (settings: DesktopSettings) =>
-  invoke<void>("settings_save", { settings });
+export const saveSettings = (settings: DesktopSettings) => invoke<void>("settings_save", { settings });
 export const runtimeManifest = () => invoke<RuntimeManifest>("runtime_manifest");
 
 export const sessionsList = () => invoke<SessionSummary[]>("sessions_list");
-export const sessionRegister = (id: string, workspace: string, title?: string) =>
-  invoke<SessionSummary>("session_register", { id, workspace, title });
-export const sessionSetStatus = (id: string, status: string) =>
-  invoke<void>("session_set_status", { id, status });
-export const sessionForget = (id: string) =>
-  invoke<void>("session_forget", { id });
+export const sessionRegister = (id: string, workspace: string, title?: string) => invoke<SessionSummary>("session_register", { id, workspace, title });
+export const sessionSetStatus = (id: string, status: string) => invoke<void>("session_set_status", { id, status });
+export const sessionForget = (id: string) => invoke<void>("session_forget", { id });
+
+export const updateCheck = () => invoke<UpdateInfo | null>("update_check");
+export const updateInstall = (info: UpdateInfo) => invoke<void>("update_install", { info });
 
 export function listenRuntimeOutput(handler: (payload: RuntimeEvent) => void): Promise<UnlistenFn> {
   return listen<RuntimeEvent>("runtime:event", event => handler(event.payload));
