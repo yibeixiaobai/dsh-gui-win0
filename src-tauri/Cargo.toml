@@ -1,0 +1,22 @@
+[package]
+name = "dsh-gui-win0"
+version = "0.1.0"
+description = "DeepSeek Harness native desktop host"
+authors = ["yibeixiaobai"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "dsh_gui_win0_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3" }
+
+[dependencies]
+tauri = { version = "2.11.5" }
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-single-instance = "2.4.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
