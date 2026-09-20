@@ -1,8 +1,9 @@
 use std::{
+  collections::HashMap,
   io::Write,
   path::{Path, PathBuf},
   process::{Child, ChildStdin, Command, Stdio},
-  sync::{Arc, Mutex},
+  sync::{mpsc, Arc, Mutex},
   thread,
   time::{Duration, Instant},
 };
@@ -45,6 +46,8 @@ pub struct HealthCheck {
   pub reason: String,
 }
 
+type Pending = HashMap<u64, mpsc::Sender<Result<Value, String>>>;
+
 struct RuntimeInner {
   status: RuntimeStatus,
   child: Option<Child>,
@@ -53,6 +56,7 @@ struct RuntimeInner {
   workspace: Option<PathBuf>,
   executable: Option<PathBuf>,
   last_error: Option<String>,
+  pending: Pending,
 }
 
 #[derive(Clone)]
@@ -71,6 +75,7 @@ impl RuntimeSupervisor {
         workspace: None,
         executable: None,
         last_error: None,
+        pending: HashMap::new(),
       })),
     }
   }
@@ -98,6 +103,7 @@ impl RuntimeSupervisor {
     inner.workspace = Some(workspace_path.clone());
     inner.executable = Some(executable.clone());
     inner.last_error = None;
+    inner.pending.clear();
 
     let mut command = Command::new(&executable);
     command
@@ -141,6 +147,7 @@ impl RuntimeSupervisor {
     inner.status = RuntimeStatus::Running;
 
     let event_app = app.clone();
+    let shared = Arc::clone(&self.inner);
     thread::spawn(move || {
       use std::io::{BufRead, BufReader};
       for line in BufReader::new(stdout).lines() {
@@ -148,6 +155,22 @@ impl RuntimeSupervisor {
           Ok(line) => {
             let payload = crate::runtime::protocol::parse_json_line(&line)
               .unwrap_or_else(|| json!({ "raw": line }));
+
+            if crate::runtime::protocol::is_response(&payload) {
+              if let Some(id) = crate::runtime::protocol::response_id(&payload) {
+                let waiter = shared.lock().ok().and_then(|mut guard| guard.pending.remove(&id));
+                if let Some(waiter) = waiter {
+                  let result = if let Some(error) = payload.get("error") {
+                    Err(error.to_string())
+                  } else {
+                    Ok(payload)
+                  };
+                  let _ = waiter.send(result);
+                  continue;
+                }
+              }
+            }
+
             let _ = event_app.emit(
               "runtime:event",
               crate::runtime::protocol::RuntimeEvent {
@@ -205,12 +228,17 @@ impl RuntimeSupervisor {
         guard.child = None;
         guard.stdin = None;
         guard.pid = None;
+        let message = format!("runtime exited: {:?}", exit_code);
+        let pending = std::mem::take(&mut guard.pending);
         if guard.status == RuntimeStatus::Stopping {
           guard.status = RuntimeStatus::Stopped;
           guard.last_error = None;
         } else {
           guard.status = RuntimeStatus::Crashed;
-          guard.last_error = Some(format!("runtime exited: {:?}", exit_code));
+          guard.last_error = Some(message.clone());
+        }
+        for (_, sender) in pending {
+          let _ = sender.send(Err(message.clone()));
         }
       }
 
@@ -232,15 +260,15 @@ impl RuntimeSupervisor {
     }
 
     let request = crate::runtime::protocol::JsonRpcRequest::new(method, params);
-    let line = request
-      .to_line()
-      .map_err(|e| RuntimeError::Protocol(e.to_string()))?;
+    let line = request.to_line().map_err(|e| RuntimeError::Protocol(e.to_string()))?;
+    let (sender, receiver) = mpsc::channel::<Result<Value, String>>();
 
     let mut stdin = {
       let mut inner = self.inner.lock().map_err(|_| RuntimeError::StatePoisoned)?;
       if inner.status != RuntimeStatus::Running {
         return Err(RuntimeError::NotRunning);
       }
+      inner.pending.insert(request.id, sender);
       inner.stdin.take().ok_or(RuntimeError::NotRunning)?
     };
 
@@ -248,8 +276,25 @@ impl RuntimeSupervisor {
 
     let mut inner = self.inner.lock().map_err(|_| RuntimeError::StatePoisoned)?;
     inner.stdin = Some(stdin);
-    result.map_err(|e| RuntimeError::Io(e.to_string()))?;
-    Ok(json!({ "id": request.id, "accepted": true }))
+
+    if let Err(error) = result {
+      inner.pending.remove(&request.id);
+      return Err(RuntimeError::Io(error.to_string()));
+    }
+
+    drop(inner);
+
+    match receiver.recv_timeout(Duration::from_secs(60)) {
+      Ok(Ok(response)) => Ok(response),
+      Ok(Err(error)) => Err(RuntimeError::Remote(error)),
+      Err(mpsc::RecvTimeoutError::Timeout) => {
+        if let Ok(mut guard) = self.inner.lock() {
+          guard.pending.remove(&request.id);
+        }
+        Err(RuntimeError::Timeout(request.method))
+      }
+      Err(mpsc::RecvTimeoutError::Disconnected) => Err(RuntimeError::Protocol("runtime response channel closed".into())),
+    }
   }
 
   pub fn stop(&self) -> Result<(), RuntimeError> {
@@ -260,12 +305,17 @@ impl RuntimeSupervisor {
       }
 
       inner.status = RuntimeStatus::Stopping;
+      for (_, sender) in std::mem::take(&mut inner.pending) {
+        let _ = sender.send(Err("runtime is stopping".into()));
+      }
+
       if let Some(stdin) = inner.stdin.as_mut() {
         if let Ok(line) = crate::runtime::protocol::JsonRpcRequest::new("shutdown", None).to_line() {
           let _ = stdin.write_all(line.as_bytes());
           let _ = stdin.flush();
         }
       }
+
       inner.stdin.take();
       inner.child.take()
     };
@@ -288,7 +338,6 @@ impl RuntimeSupervisor {
       inner.stdin = None;
       inner.pid = None;
     }
-
     Ok(())
   }
 
@@ -308,16 +357,10 @@ impl RuntimeSupervisor {
   ) -> Result<HealthCheck, RuntimeError> {
     let snapshot = self.snapshot(app)?;
     if snapshot.status != RuntimeStatus::Running {
-      return Ok(HealthCheck {
-        ok: false,
-        reason: format!("runtime status is {:?}", snapshot.status),
-      });
+      return Ok(HealthCheck { ok: false, reason: format!("runtime status is {:?}", snapshot.status) });
     }
     if snapshot.pid.is_none() || snapshot.executable.is_none() {
-      return Ok(HealthCheck {
-        ok: false,
-        reason: "runtime process metadata is incomplete".into(),
-      });
+      return Ok(HealthCheck { ok: false, reason: "runtime process metadata is incomplete".into() });
     }
     Ok(HealthCheck { ok: true, reason: "runtime process is running".into() })
   }
@@ -345,12 +388,8 @@ fn snapshot_locked(
 
 fn validate_workspace(input: &str) -> Result<PathBuf, RuntimeError> {
   let path = PathBuf::from(input);
-  if !path.is_absolute() {
-    return Err(RuntimeError::Workspace("workspace must be absolute".into()));
-  }
-  if !path.is_dir() {
-    return Err(RuntimeError::Workspace("workspace must be an existing directory".into()));
-  }
+  if !path.is_absolute() { return Err(RuntimeError::Workspace("workspace must be absolute".into())); }
+  if !path.is_dir() { return Err(RuntimeError::Workspace("workspace must be an existing directory".into())); }
   Ok(path)
 }
 
@@ -359,52 +398,28 @@ fn resolve_runtime_executable<R: tauri::Runtime>(
 ) -> Result<PathBuf, RuntimeError> {
   if let Ok(path) = std::env::var("DSH_RUNTIME_PATH") {
     let path = PathBuf::from(path);
-    if path.is_file() {
-      return Ok(path);
-    }
+    if path.is_file() { return Ok(path); }
   }
 
-  let resource_dir = app
-    .path()
-    .resource_dir()
-    .map_err(|e| RuntimeError::Path(e.to_string()))?;
+  let resource_dir = app.path().resource_dir().map_err(|e| RuntimeError::Path(e.to_string()))?;
   let candidate = resource_dir.join("runtime").join("bin").join(runtime_name());
-
-  if candidate.is_file() {
-    Ok(candidate)
-  } else {
-    Err(RuntimeError::RuntimeMissing(candidate.display().to_string()))
-  }
+  if candidate.is_file() { Ok(candidate) }
+  else { Err(RuntimeError::RuntimeMissing(candidate.display().to_string())) }
 }
 
-fn validate_runtime_artifact(
-  executable: &Path,
-  manifest: &RuntimeManifest,
-) -> Result<(), RuntimeError> {
+fn validate_runtime_artifact(executable: &Path, manifest: &RuntimeManifest) -> Result<(), RuntimeError> {
   let expected = manifest.runtime_artifact.to_lowercase();
-  let actual = executable
-    .file_stem()
-    .and_then(|n| n.to_str())
-    .unwrap_or_default()
-    .to_lowercase();
-
-  if !actual.contains(&expected) {
-    return Err(RuntimeError::RuntimeMismatch(format!(
-      "runtime '{}' does not match pinned artifact '{}'",
-      actual, expected
-    )));
+  let actual = executable.file_stem().and_then(|n| n.to_str()).unwrap_or_default().to_lowercase();
+  if actual != expected {
+    return Err(RuntimeError::RuntimeMismatch(format!("runtime '{}' does not match pinned artifact '{}'", actual, expected)));
   }
   Ok(())
 }
 
 fn runtime_name() -> &'static str {
-  if cfg!(windows) {
-    "deepseek-harness-sdk-runtime-windows-x64.exe"
-  } else if cfg!(target_arch = "aarch64") {
-    "deepseek-harness-sdk-runtime-macos-arm64"
-  } else {
-    "deepseek-harness-sdk-runtime-linux-x64"
-  }
+  if cfg!(windows) { "deepseek-harness-sdk-runtime-windows-x64.exe" }
+  else if cfg!(target_arch = "aarch64") { "deepseek-harness-sdk-runtime-macos-arm64" }
+  else { "deepseek-harness-sdk-runtime-linux-x64" }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -427,6 +442,10 @@ pub enum RuntimeError {
   Io(std::io::Error),
   #[error("protocol error: {0}")]
   Protocol(String),
+  #[error("remote runtime error: {0}")]
+  Remote(String),
+  #[error("request timed out: {0}")]
+  Timeout(String),
   #[error("runtime manifest error: {0}")]
   Manifest(String),
 }
