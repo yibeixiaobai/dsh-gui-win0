@@ -126,8 +126,7 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .manage(RuntimeSupervisor::new())
     .setup(|app| {
-      let paths = crate::filesystem::AppPaths::from_app(app.handle())
-        .map_err(std::io::Error::other)?;
+      let paths = crate::filesystem::AppPaths::from_app(app.handle()).map_err(std::io::Error::other)?;
       paths.ensure_layout()?;
       paths.cleanup_stale_temp()?;
       Ok(())
@@ -139,6 +138,7 @@ pub fn run() {
           api.prevent_close();
           let _ = state.stop();
         }
+        let _ = window.close();
       }
     })
     .invoke_handler(tauri::generate_handler![
