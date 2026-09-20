@@ -73,7 +73,12 @@ fn sessions_list(app: tauri::AppHandle) -> Result<Vec<SessionSummary>, String> {
 }
 
 #[tauri::command]
-fn session_register(app: tauri::AppHandle, id: String, workspace: String, title: Option<String>) -> Result<SessionSummary, String> {
+fn session_register(
+  app: tauri::AppHandle,
+  id: String,
+  workspace: String,
+  title: Option<String>,
+) -> Result<SessionSummary, String> {
   session::register(&app, &id, &workspace, title.as_deref()).map_err(|e| e.to_string())
 }
 
@@ -96,11 +101,13 @@ fn update_check() -> Result<Option<UpdateInfo>, String> {
 fn update_install(app: tauri::AppHandle, info: UpdateInfo) -> Result<(), String> {
   let installer = download_installer(&app, &info)?;
   launch_installer(installer)?;
+
   let exit_app = app.clone();
   std::thread::spawn(move || {
     std::thread::sleep(std::time::Duration::from_millis(800));
     exit_app.exit(0);
   });
+
   Ok(())
 }
 
@@ -120,9 +127,9 @@ pub fn run() {
     .manage(RuntimeSupervisor::new())
     .setup(|app| {
       let paths = crate::filesystem::AppPaths::from_app(app.handle())
-        .map_err(tauri::Error::Anyhow)?;
-      paths.ensure_layout().map_err(tauri::Error::Io)?;
-      paths.cleanup_stale_temp().map_err(tauri::Error::Io)?;
+        .map_err(std::io::Error::other)?;
+      paths.ensure_layout()?;
+      paths.cleanup_stale_temp()?;
       Ok(())
     })
     .on_window_event(|window, event| {
