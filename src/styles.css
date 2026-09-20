@@ -1,0 +1,53 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #f4f5f7; background: #0e1014; font-synthesis: none; text-rendering: optimizeLegibility;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 1120px; min-height: 100vh; background: #0e1014; }
+button, input, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.app-shell { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 100vh; }
+.sidebar { display: flex; flex-direction: column; gap: 14px; padding: 20px; border-right: 1px solid #252a33; background: #11141a; }
+.brand { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.brand-mark { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: #e7ebf3; color: #111318; font-weight: 800; }
+.brand strong, .brand span { display: block; }
+.brand span { color: #8992a1; font-size: 12px; margin-top: 2px; }
+.side-card { display: grid; gap: 8px; padding: 13px; border: 1px solid #252a33; background: #151922; border-radius: 12px; }
+.label, .eyebrow { color: #7f8795; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
+.muted { color: #8a92a0; font-size: 12px; }
+.status-row { display: flex; gap: 8px; align-items: center; }
+.status-dot { width: 8px; height: 8px; border-radius: 999px; background: #636b78; }
+.status-dot.online { background: #8bd17c; }
+input, textarea { width: 100%; color: #f4f5f7; background: #0f1217; border: 1px solid #2a303a; border-radius: 9px; padding: 9px 10px; outline: none; }
+input:focus, textarea:focus { border-color: #667080; }
+.sidebar-spacer { flex: 1; }
+.button-row { display: grid; grid-template-columns: 1fr 90px; gap: 8px; }
+.primary-button, .danger-button, .send-button, .ghost-button { border-radius: 9px; border: 1px solid #303744; padding: 9px 11px; color: #f5f7fa; }
+.primary-button { background: #e7ebf3; color: #111318; border-color: #e7ebf3; font-weight: 700; }
+.danger-button { background: #1c1b1f; }
+.ghost-button { background: #171b22; }
+.sidebar > .ghost-button { width: 100%; }
+.main-panel { display: grid; grid-template-rows: auto 1fr 180px; min-width: 0; }
+.topbar { display: flex; justify-content: space-between; gap: 18px; align-items: center; padding: 20px 26px; border-bottom: 1px solid #252a33; background: #101318; }
+.topbar h1 { margin: 4px 0 0; font-size: 22px; }
+.topbar-meta { display: grid; gap: 4px; text-align: right; color: #858e9e; font-size: 11px; }
+.topbar-meta code { color: #b9c1ce; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.error-banner { margin: 14px 26px 0; padding: 10px 12px; border: 1px solid #664247; background: #25171a; color: #f2b9c1; border-radius: 9px; }
+.chat-panel { min-height: 0; display: grid; grid-template-rows: 1fr auto; padding: 20px 26px; gap: 18px; }
+.chat-scroll { min-height: 0; overflow: auto; padding-right: 6px; }
+.empty-state { height: 100%; display: grid; place-items: center; align-content: center; text-align: center; color: #858e9d; }
+.empty-icon { font-size: 48px; color: #c6ccd5; }
+.empty-state h2 { margin: 10px 0 6px; color: #e9edf3; }
+.empty-state p { max-width: 580px; line-height: 1.7; }
+.message { max-width: 860px; margin: 0 auto 15px; padding: 14px 16px; border: 1px solid #262c36; border-radius: 12px; background: #141820; }
+.message.user { background: #181d25; }
+.message-role { color: #7f8795; font-size: 10px; text-transform: uppercase; margin-bottom: 8px; }
+.message pre, .log-list pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
+.composer { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 12px; border: 1px solid #252a33; background: #12161d; border-radius: 14px; }
+.composer textarea { min-height: 70px; resize: vertical; }
+.send-button { align-self: stretch; min-width: 76px; background: #e7ebf3; color: #111318; border-color: #e7ebf3; font-weight: 700; }
+.diagnostics { padding: 0 26px 20px; min-height: 0; }
+.diagnostics-title { color: #858e9c; font-size: 11px; margin-bottom: 7px; }
+.log-list { height: 145px; overflow: auto; display: grid; gap: 5px; padding: 10px; border: 1px solid #252a33; border-radius: 10px; background: #0a0c10; }
+.log-list pre { color: #8f98a7; font-size: 11px; line-height: 1.45; }
