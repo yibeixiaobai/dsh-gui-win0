@@ -1,7 +1,7 @@
 {
   "name": "dsh-gui-win0",
   "private": true,
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "packageManager": "pnpm@10",
   "scripts": {
