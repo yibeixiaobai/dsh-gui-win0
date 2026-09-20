@@ -11,14 +11,11 @@ use crate::{
   runtime::RuntimeSupervisor,
   session::SessionSummary,
   settings::{load_settings, save_settings, DesktopSettings},
-  update::{load_manifest, RuntimeManifest},
+  update::{check_update, download_installer, launch_installer, load_manifest, RuntimeManifest, UpdateInfo},
 };
 
 #[tauri::command]
-fn runtime_status(
-  app: tauri::AppHandle,
-  supervisor: State<'_, RuntimeSupervisor>,
-) -> Result<runtime::RuntimeSnapshot, String> {
+fn runtime_status(app: tauri::AppHandle, supervisor: State<'_, RuntimeSupervisor>) -> Result<runtime::RuntimeSnapshot, String> {
   supervisor.snapshot(&app).map_err(|e| e.to_string())
 }
 
@@ -33,10 +30,7 @@ fn runtime_start(
 }
 
 #[tauri::command]
-fn runtime_stop(
-  app: tauri::AppHandle,
-  supervisor: State<'_, RuntimeSupervisor>,
-) -> Result<runtime::RuntimeSnapshot, String> {
+fn runtime_stop(app: tauri::AppHandle, supervisor: State<'_, RuntimeSupervisor>) -> Result<runtime::RuntimeSnapshot, String> {
   supervisor.stop().map_err(|e| e.to_string())?;
   supervisor.snapshot(&app).map_err(|e| e.to_string())
 }
@@ -79,12 +73,7 @@ fn sessions_list(app: tauri::AppHandle) -> Result<Vec<SessionSummary>, String> {
 }
 
 #[tauri::command]
-fn session_register(
-  app: tauri::AppHandle,
-  id: String,
-  workspace: String,
-  title: Option<String>,
-) -> Result<SessionSummary, String> {
+fn session_register(app: tauri::AppHandle, id: String, workspace: String, title: Option<String>) -> Result<SessionSummary, String> {
   session::register(&app, &id, &workspace, title.as_deref()).map_err(|e| e.to_string())
 }
 
@@ -96,6 +85,23 @@ fn session_set_status(app: tauri::AppHandle, id: String, status: String) -> Resu
 #[tauri::command]
 fn session_forget(app: tauri::AppHandle, id: String) -> Result<(), String> {
   session::forget(&app, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_check() -> Result<Option<UpdateInfo>, String> {
+  check_update()
+}
+
+#[tauri::command]
+fn update_install(app: tauri::AppHandle, info: UpdateInfo) -> Result<(), String> {
+  let installer = download_installer(&app, &info)?;
+  launch_installer(installer)?;
+  let exit_app = app.clone();
+  std::thread::spawn(move || {
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    exit_app.exit(0);
+  });
+  Ok(())
 }
 
 pub fn run() {
@@ -140,7 +146,9 @@ pub fn run() {
       sessions_list,
       session_register,
       session_set_status,
-      session_forget
+      session_forget,
+      update_check,
+      update_install
     ])
     .run(tauri::generate_context!())
     .expect("error while running DSH Desktop");
