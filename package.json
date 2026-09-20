@@ -1,9 +1,9 @@
 {
   "name": "dsh-gui-win0",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
-  "packageManager": "pnpm@10",
+  "packageManager": "pnpm@10.34.5",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
