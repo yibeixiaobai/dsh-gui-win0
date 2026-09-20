@@ -1,5 +1,6 @@
 mod filesystem;
 mod runtime;
+mod session;
 mod settings;
 mod update;
 
@@ -7,8 +8,8 @@ use tauri::{Manager, State};
 use tauri_plugin_single_instance::Builder as SingleInstanceBuilder;
 
 use crate::{
-  filesystem::AppPaths,
   runtime::RuntimeSupervisor,
+  session::SessionSummary,
   settings::{load_settings, save_settings, DesktopSettings},
   update::{load_manifest, RuntimeManifest},
 };
@@ -72,6 +73,31 @@ fn runtime_manifest() -> Result<RuntimeManifest, String> {
   load_manifest()
 }
 
+#[tauri::command]
+fn sessions_list(app: tauri::AppHandle) -> Result<Vec<SessionSummary>, String> {
+  session::list(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn session_register(
+  app: tauri::AppHandle,
+  id: String,
+  workspace: String,
+  title: Option<String>,
+) -> Result<SessionSummary, String> {
+  session::register(&app, &id, &workspace, title.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn session_set_status(app: tauri::AppHandle, id: String, status: String) -> Result<(), String> {
+  session::set_status(&app, &id, &status).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn session_forget(app: tauri::AppHandle, id: String) -> Result<(), String> {
+  session::forget(&app, &id).map_err(|e| e.to_string())
+}
+
 pub fn run() {
   tauri::Builder::default()
     .plugin(
@@ -87,9 +113,10 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .manage(RuntimeSupervisor::new())
     .setup(|app| {
-      let paths = AppPaths::from_app(app.handle()).expect("resolve Desktop AppData paths");
-      paths.ensure_layout().expect("create Desktop AppData layout");
-      paths.cleanup_stale_temp().expect("cleanup stale Desktop temp");
+      let paths = crate::filesystem::AppPaths::from_app(app.handle())
+        .map_err(tauri::Error::Anyhow)?;
+      paths.ensure_layout().map_err(tauri::Error::Io)?;
+      paths.cleanup_stale_temp().map_err(tauri::Error::Io)?;
       Ok(())
     })
     .on_window_event(|window, event| {
@@ -110,6 +137,10 @@ pub fn run() {
       runtime_manifest,
       settings_get,
       settings_save,
+      sessions_list,
+      session_register,
+      session_set_status,
+      session_forget
     ])
     .run(tauri::generate_context!())
     .expect("error while running DSH Desktop");
