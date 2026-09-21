@@ -29,7 +29,7 @@ pub struct ProtocolManifest {
   pub notifications: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
   pub version: String,
