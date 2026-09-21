@@ -10,7 +10,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::{
   filesystem::AppPaths,
@@ -262,7 +262,7 @@ impl RuntimeSupervisor {
 
     if let Err(error) = result {
       inner.pending.remove(&request.id);
-      return Err(RuntimeError::Io(error.to_string()));
+      return Err(RuntimeError::Io(error));
     }
     drop(inner);
 
@@ -338,7 +338,7 @@ impl RuntimeSupervisor {
     if snapshot.pid.is_none() || snapshot.executable.is_none() {
       return Ok(HealthCheck { ok: false, reason: "runtime process metadata is incomplete".into() });
     }
-    Ok(HealthCheck { ok: true, reason: "runtime process is running" })
+    Ok(HealthCheck { ok: true, reason: "runtime process is running".into() })
   }
 
   pub fn is_running(&self) -> bool {
