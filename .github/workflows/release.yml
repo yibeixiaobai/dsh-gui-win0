@@ -3,6 +3,11 @@ name: release-windows
 on:
   push:
     branches: ["main"]
+    paths:
+      - "package.json"
+      - "src-tauri/tauri.conf.json"
+      - "src-tauri/Cargo.toml"
+      - "runtime/dsh-runtime.json"
   workflow_dispatch:
     inputs:
       publish:
